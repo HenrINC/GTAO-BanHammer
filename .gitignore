@@ -1,0 +1,4 @@
+config.json
+build/
+__pycache__/
+*.egg-info/

@@ -1,0 +1,4 @@
+sqlalchemy
+pywinauto
+psycopg2
+psutil

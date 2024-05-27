@@ -1,0 +1,11 @@
+{
+    "database": {
+        "uri": "..."
+    },
+    "stand": {
+        "executable_path": "..."
+    },
+    "gta": {
+        "executable_path": "..."
+    }
+}
