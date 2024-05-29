@@ -13,64 +13,14 @@ from gta_banhammer.middleware_lib import BanHammerMiddleware, STAND_ROOT
 class BanHammerServerMiddleware(BanHammerMiddleware):
     def __init__(self):
         super().__init__()
-        self.stand_path: Optional[str] = None
-        self.stand_app: Optional[Application] = None
-        self.stand_window: Optional[WindowSpecification] = None
 
         self.gta_process: Optional[psutil.Process] = None
 
-    def init_stand(self):
-        self.stand_path = self.config["stand"]["executable_path"]
+    def init_stand(self): ...
 
-        try:
-            stand_process = self.get_process_by_executable_path(self.stand_path)
-            print("Attach to existing Stand instance.")
-            self.stand_app = Application().connect(process=stand_process.pid)
-        except RuntimeError:
-            print("Start new Stand instance and attaching to it.")
-            time.sleep(1)
-            ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", self.stand_path, None, None, 1
-            )
-            self.init_stand()
+    def ensure_stand_running(self): ...
 
-        start_time = time.time()
-
-        while (
-            window_number := len(
-                [window for window in self.stand_app.windows() if window.is_visible()]
-            )
-        ) != 1:
-            time.sleep(0.1)
-            if time.time() - start_time > 10:
-                if window_number > 1:
-                    raise RuntimeError("More than one window is visible")
-                raise RuntimeError("No visible windows")
-        print("Stand ready.")
-        self.stand_window = self.stand_app.top_window()
-
-    def ensure_stand_running(self):
-        if self.stand_app is None or not self.stand_app.is_process_running():
-            self.init_stand()
-
-    def run_gta_from_stand(self):
-        self.ensure_stand_running()
-        run_buttons = [
-            control
-            for control in self.stand_window.children()
-            if control.is_visible()
-            and control.control_type() == "System.Windows.Forms.Button"
-            and control.texts()[0] == "Launch"
-        ]
-        if len_run_buttons := len(run_buttons) != 1:
-            if len_run_buttons > 1:
-                raise RuntimeError("More than one run button found")
-            raise RuntimeError("No run button found")
-        print(f"Found button with name {''.join(run_buttons[0].texts())}")
-        self.stand_window.set_focus()
-        time.sleep(3)
-        run_buttons[0].click()
-        time.sleep(3)
+    def run_gta_stand(self): ...
 
     def init_gta(self):
         gta_path = self.config["gta"]["executable_path"]
@@ -135,8 +85,9 @@ if __name__ == "__main__":
 
     while True:
         try:
-            # middleware.ensure_gta_runnung()
-            middleware.download_banned_players()
+            middleware.ensure_gta_runnung()
+            middleware.ensure_stand_running()
+            # middleware.download_banned_players()
             # middleware.download_admin_players()
             # middleware.upload_detections()
         except Exception as e:

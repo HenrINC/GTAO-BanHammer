@@ -23,16 +23,6 @@ class BanHammerMiddleware:
 
         Base.metadata.create_all(self.engine)
 
-    @staticmethod
-    def get_process_by_executable_path(path: str) -> psutil.Process:
-        path = path.lower().replace("/", "\\")
-        for proc in psutil.process_iter(["exe"]):
-            if (
-                proc_path := proc.info["exe"]
-            ) is not None and proc_path.lower() == path.lower():
-                return proc
-        raise RuntimeError("No process found")
-
 
 if __name__ == "__main__":
     BanHammerMiddleware()
