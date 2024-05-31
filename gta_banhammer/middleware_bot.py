@@ -1,54 +1,45 @@
 import time
-import ctypes
-from typing import Optional
+from pathlib import Path
 
-import psutil
-from pywinauto.application import Application, WindowSpecification
-
-from gta_banhammer.tables import Player, BannedPlayer, Detection
 from gta_banhammer.enums import RoleEnum
+from gta_banhammer.tables import Player, BannedPlayer, Detection
 from gta_banhammer.middleware_lib import BanHammerMiddleware, STAND_ROOT
+from gta_banhammer.stand import Stand
+from gta_banhammer.gta import GTA
 
 
 class BanHammerServerMiddleware(BanHammerMiddleware):
     def __init__(self):
         super().__init__()
 
-        self.gta_process: Optional[psutil.Process] = None
+        self._stand: Stand = None
+        self._gta: GTA = None
 
-    def init_stand(self): ...
+    @property
+    def stand(self):
+        if self._stand is None:
+            self.init_stand()
+        return self._stand
 
-    def ensure_stand_running(self): ...
-
-    def run_gta_stand(self): ...
+    def init_stand(self):
+        self.gta.ensure_running()
+        self.gta.ensure_stable()
+        self._stand = Stand(
+            self.gta.process,
+            self.gta.pm,
+            dll_folder=STAND_ROOT / "Bin",
+            injector_path=Path(self.config["injector"]["binaries_path"]),
+        )
 
     def init_gta(self):
-        gta_path = self.config["gta"]["executable_path"]
+        gta_path = self.config["gta"]["binaries_folder"]
+        self._gta = GTA(gta_path)
 
-        try:
-            self.gta_process = self.get_process_by_executable_path(gta_path)
-            return
-        except RuntimeError:
-            pass
-
-        print(f"Starting GTA from with stand")
-        self.run_gta_from_stand()
-
-        start_time = time.time()
-
-        while True:
-            try:
-                process = self.get_process_by_executable_path(gta_path)
-                self.gta_process = process
-                break
-            except RuntimeError:
-                if time.time() - start_time > 60:
-                    raise RuntimeError("No GTA process found")
-                time.sleep(1)
-
-    def ensure_gta_runnung(self):
-        if self.gta_process is None or not self.gta_process.is_running():
+    @property
+    def gta(self):
+        if self._gta is None:
             self.init_gta()
+        return self._gta
 
     def get_banned_players(self):
         with self.Session() as session:
@@ -85,11 +76,8 @@ if __name__ == "__main__":
 
     while True:
         try:
-            middleware.ensure_gta_runnung()
-            middleware.ensure_stand_running()
-            # middleware.download_banned_players()
-            # middleware.download_admin_players()
-            # middleware.upload_detections()
+            middleware.gta.ensure_running()
+            middleware.stand.ensure_running()
         except Exception as e:
             print(f"An error occurred: {e}")
             time.sleep(10)

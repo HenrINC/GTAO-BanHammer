@@ -1,5 +1,4 @@
 import time
-import struct
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -31,29 +30,17 @@ class GTA:
     GAME_STATE_MASK = "xx?????xxxxx"
     IS_SESSION_STARTED_PATTERN = "40 38 35 ?? ?? ?? ?? 75 0E 4C 8B C3 49 8B D7 49 8B CE"
     IS_SESSION_STARTED_MASK = "xxx????xxxxxxxxxxx"
-    PRESENCE_DATA_PATTERN = "48 8B 0D ?? ?? ?? ?? 44 8B 4B 60"
-    PRESENCE_DATA_MASK = "xxx????xxx"
-    WORLD_PATTERN = "48 8B 0D ?? ?? ?? ?? 48 8B 01 FF 90 ?? ?? ?? ?? 48 8B 0D"
-    WORLD_MASK = "xxx????xxxxx????xxx"
 
     def __init__(self, game_folder) -> None:
         self.game_folder: Path = Path(game_folder)
         self.executable_path: Path = self.game_folder / "GTA5.exe"
         self.start_script_path: Path = self.game_folder / "PlayGTAV.exe"
         self.stand_instance: ...
-        self.proces: Optional[psutil.Process] = None
+        self.process: Optional[psutil.Process] = None
         self.pm: Optional[pymem.Pymem] = None
         self.module: Optional[pymem.process.Module] = None
         self.module_base: Optional[int] = None
         self.module_size: Optional[int] = None
-
-    @property
-    def is_in_game(self):
-        """
-        Uses Pymem to analyse the games memory and check if the player is in game.
-        """
-        if not (self.is_running and self.pm):
-            return False
 
     @property
     def is_running(self):
@@ -75,6 +62,24 @@ class GTA:
             return False
         return self.process.status() != psutil.STATUS_RUNNING
 
+    @property
+    def is_stable(self):
+        """
+        Checks if the game is in a stable state.
+        """
+        self.ensure_running()
+        return self.get_game_state() == 0 and self.is_session_started
+
+    def ensure_stable(self):
+        """
+        Ensures that the game is in a stable state.
+        """
+        while not self.is_stable:
+            if self.needs_restart:
+                self.stop()
+                self.start()
+            time.sleep(0.1)
+
     def attach_or_start(self):
         """
         Attaches to the GTA process if it is running, otherwise starts it.
@@ -88,6 +93,8 @@ class GTA:
         """
         Attaches to the GTA process.
         """
+        if self.needs_restart:
+            raise RuntimeError("Game needs restart")
         self.process = get_process_by_executable_path(self.executable_path)
         self.pm = pymem.Pymem()
         self.pm.open_process_from_id(self.process.pid)
@@ -101,6 +108,8 @@ class GTA:
         """
         Starts the GTA process. And attaches to it.
         """
+        if self.needs_restart:
+            self.stop()
         subprocess.Popen([self.start_script_path], cwd=self.game_folder)
         start = time.time()
         # If you're not using the R* launcher, the game launchging process took up to 2 mins in testing
@@ -155,106 +164,6 @@ class GTA:
             return self.pm.read_int(game_state_address)
         return None
 
-    def get_presence_data(self):
-        """
-        Gets the presence data of the player.
-        Currently returns the address, may return an actual object in the future.
-        """
-        self.ensure_running()
-        address = self.pattern_scan(self.PRESENCE_DATA_PATTERN, self.PRESENCE_DATA_MASK)
-        if address:
-
-            ajusted_address = address + 3
-            offset = self.pm.read_int(ajusted_address)
-            presence_data_address = ajusted_address + offset + 4
-            return presence_data_address
-        return None
-
-    def _get_world_address(self):
-        """
-        Gets the world address.
-        """
-        self.ensure_running()
-        return self.pattern_scan(self.WORLD_PATTERN, self.WORLD_MASK)
-
-    def _get_user_net_player_address(self):
-        """
-        Gets the user net player address.
-        """
-        self.ensure_running()
-        return self._get_world_address() + 0x8
-
-    def get_user_net_player(self):
-        """
-        Gets the user net player.
-        Seems to return nonsense
-        """
-        self.ensure_running()
-        address = self._get_user_net_player_address()
-        raw_data = self.pm.read_bytes(address, 0x0CB8)
-        player_info_dict = {}
-        player_info_dict["m_InternalIP"] = struct.unpack_from("I", raw_data, 0x0034)[0]
-        player_info_dict["m_InternalPort"] = struct.unpack_from("H", raw_data, 0x0038)[
-            0
-        ]
-        player_info_dict["m_RelayIP"] = struct.unpack_from("I", raw_data, 0x003C)[0]
-        player_info_dict["m_RelayPort"] = struct.unpack_from("H", raw_data, 0x0040)[0]
-        player_info_dict["m_ExternalIP"] = struct.unpack_from("I", raw_data, 0x0044)[0]
-        player_info_dict["m_ExternalPort"] = struct.unpack_from("H", raw_data, 0x0048)[
-            0
-        ]
-        player_info_dict["iRockstarID"] = struct.unpack_from("I", raw_data, 0x0068)[0]
-        player_info_dict["m_Name"] = (
-            raw_data[0x007C : 0x007C + 20]
-            .decode("utf-8", errors="ignore")
-            .strip("\x00")
-        )
-        player_info_dict["fSwimSpeed"] = struct.unpack_from("f", raw_data, 0x0148)[0]
-        player_info_dict["fWalkSpeed"] = struct.unpack_from("f", raw_data, 0x014C)[0]
-        player_info_dict["fStealthWalkSpeed"] = struct.unpack_from(
-            "f", raw_data, 0x0168
-        )[0]
-        player_info_dict["m_EntityPtr"] = struct.unpack_from("Q", raw_data, 0x01C8)[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["iFrameFlags"] = struct.unpack_from("I", raw_data, 0x01F8)[0]
-        player_info_dict["ioConstantLightEffectPtr"] = struct.unpack_from(
-            "Q", raw_data, 0x0240
-        )[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["fwWantedLightEffectPtr"] = struct.unpack_from(
-            "Q", raw_data, 0x0258
-        )[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["pCPlayerPedTargeting"] = struct.unpack_from(
-            "Q", raw_data, 0x0280
-        )[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["m_EntityPtr2"] = struct.unpack_from("Q", raw_data, 0x0288)[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["bIsWanted"] = struct.unpack_from("?", raw_data, 0x0810)[0]
-        player_info_dict["iFakeWantedLevel"] = struct.unpack_from(
-            "I", raw_data, 0x0844
-        )[0]
-        player_info_dict["iWantedLevel"] = struct.unpack_from("I", raw_data, 0x0848)[0]
-        player_info_dict["pCWantedIncident"] = struct.unpack_from(
-            "Q", raw_data, 0x0858
-        )[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["pCTacticalAnalysis"] = struct.unpack_from(
-            "Q", raw_data, 0x0B88
-        )[
-            0
-        ]  # Assuming 64-bit pointer
-        player_info_dict["fStamina"] = struct.unpack_from("f", raw_data, 0x0CB0)[0]
-        player_info_dict["fMaxStamina"] = struct.unpack_from("f", raw_data, 0x0CB4)[0]
-        return player_info_dict
-
     @property
     def is_session_started(self) -> bool:
         """
@@ -273,19 +182,7 @@ class GTA:
 
 
 if __name__ == "__main__":
-    import ctypes, sys, traceback
-
-    # if not ctypes.windll.shell32.IsUserAnAdmin():
-    #     # Re-launch the script with admin rights
-    #     ctypes.windll.shell32.ShellExecuteW(
-    #         None,
-    #         "runas",
-    #         sys.executable,
-    #         "gta.py",
-    #         str(Path(__file__).parent),
-    #         1,
-    #     )
-    #     sys.exit()
+    import traceback
 
     try:
         gta = GTA("J:/Epic/GTAV/")
